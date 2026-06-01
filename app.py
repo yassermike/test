@@ -132,8 +132,8 @@ with st.sidebar:
     
     # Paramètres avancés
     with st.expander("🔧 Paramètres avancés"):
-        max_rows = st.number_input("Lignes max à analyser par IA", 10, 500, 50)
-        batch_size = st.number_input("Taille des batches", 1, 10, 3)
+        max_rows = st.number_input("Lignes max à analyser par IA", 10, 10000, 5000)
+        batch_size = st.number_input("Taille des batches", 1, 20, 10)
         model_choice = st.selectbox(
             "Modèle IA",
             ["mistral-small-latest (rapide)", "mistral-large-latest (précis)"],
@@ -491,7 +491,7 @@ with tab4:
                 "Nombre de lignes à vérifier",
                 min_value=10,
                 max_value=min(len(st.session_state.df), max_rows),
-                value=min(50, len(st.session_state.df))
+                value=min(len(st.session_state.df), max_rows)
             )
         with col2:
             validation_depth = st.radio(
