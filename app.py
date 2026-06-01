@@ -22,6 +22,28 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
+# ============= PROTECTION PAR MOT DE PASSE =============
+def check_password():
+    if "authenticated" not in st.session_state:
+        st.session_state.authenticated = False
+
+    if st.session_state.authenticated:
+        return True
+
+    st.markdown("## 🔐 Accès réservé — Dusens Research")
+    password = st.text_input("Mot de passe", type="password")
+    if st.button("Se connecter"):
+        correct = st.secrets.get("APP_PASSWORD", "dusens2024")
+        if password == correct:
+            st.session_state.authenticated = True
+            st.rerun()
+        else:
+            st.error("Mot de passe incorrect")
+    return False
+
+if not check_password():
+    st.stop()
+
 # Style CSS personnalisé
 st.markdown("""
 <style>
