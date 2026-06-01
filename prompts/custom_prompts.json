@@ -1,0 +1,5 @@
+{
+  "prompt_visite_mystere_retail": "Vérifie particulièrement: 1) Le respect du protocole d'accueil (sourire, salutation, prise en charge), 2) La durée de visite (entre 15 et 60 minutes), 3) Les commentaires pour toute note inférieure à 7, 4) La photo de l'enseigne et de la caisse",
+  "prompt_satisfaction_nps": "Vérifie: 1) NPS cohérent (Détracteurs 0-6, Passifs 7-8, Promoteurs 9-10), 2) Les détracteurs (notes 0-6) doivent avoir un commentaire détaillé > 30 caractères, 3) Cohérence entre note globale et notes détaillées (différence max de 2 points)",
+  "prompt_restauration": "Vérifie: 1) Temps d'attente cohérent avec le type de service, 2) Notes propreté/hygiène avec commentaires obligatoires si < 8, 3) Photos plats si applicable, 4) Cohérence entre satisfaction globale et items détaillés (qualité, service, ambiance)"
+}
