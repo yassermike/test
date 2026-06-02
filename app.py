@@ -13,6 +13,7 @@ from modules.claude_analyzer import ClaudeAnalyzer
 from modules.validator import LocalValidator
 from modules.report_generator import ReportGenerator
 from modules.instructions_parser import InstructionsParser
+from modules.sga_validator import SGAValidator, export_to_excel
 
 # ============= CONFIGURATION DE LA PAGE =============
 st.set_page_config(
@@ -165,13 +166,21 @@ with st.sidebar:
     st.markdown("---")
     st.caption("🚀 Propulsé par Mistral AI (gratuit)")
 
+# ============= ÉTAT VALIDATION SGA =============
+if 'sga_df_data' not in st.session_state:
+    st.session_state.sga_df_data = None
+if 'sga_df_corrections' not in st.session_state:
+    st.session_state.sga_df_corrections = None
+if 'sga_summary' not in st.session_state:
+    st.session_state.sga_summary = None
+
 # ============= ZONE PRINCIPALE =============
 tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "📤 1. Upload Données",
-    "📋 2. Règles Métier",
-    "🤖 3. Analyse IA",
-    "🔎 4. Validation",
-    "📊 5. Rapport"
+    "📋 2. Règles SGA",
+    "🚀 3. Lancer la validation",
+    "📥 4. Télécharger les résultats",
+    "🤖 5. Analyse IA (optionnel)"
 ])
 
 # ============= TAB 1 : UPLOAD =============
@@ -242,443 +251,183 @@ with tab1:
         except Exception as e:
             st.error(f"❌ Erreur de lecture: {e}")
 
-# ============= TAB 2 : RÈGLES MÉTIER (INSTRUCTIONS DE VÉRIFICATION) =============
+# ============= TAB 2 : RÈGLES SGA =============
 with tab2:
-    st.header("📋 Règles Métier - Instructions de Vérification")
-    
-    st.markdown("""
-    Chargez ici votre fichier Excel **"Instructions de vérification"** qui contient les règles 
-    spécifiques à votre étude. La plateforme va parser automatiquement ces règles et les appliquer 
-    lors de la validation.
-    
-    💡 **Format attendu** : un fichier Excel avec :
-    - **Feuille 1** : le questionnaire (structure de l'étude)
-    - **Feuille 2** : les instructions de vérification (les règles)
-    
-    Les colonnes reconnues automatiquement : ID, Description/Règle, Colonne cible, Condition, 
-    Valeur attendue, Sévérité, Type, Action...
-    """)
-    
-    col1, col2 = st.columns([2, 1])
-    
-    with col1:
-        instructions_file = st.file_uploader(
-            "📥 Téléversez le fichier d'instructions de vérification",
-            type=['xlsx', 'xls'],
-            key="instructions_uploader",
-            help="Fichier Excel contenant les règles de validation spécifiques à votre étude"
-        )
-    
-    with col2:
-        st.info("""
-        **Astuce** : Vous pouvez aussi uploader ici le fichier qui contient 
-        à la fois le questionnaire ET les instructions sur 2 feuilles séparées.
-        """)
-    
-    if instructions_file:
-        try:
-            parser = InstructionsParser(file_buffer=instructions_file)
-            load_info = parser.load()
-            
-            st.success(f"✅ Fichier chargé: **{instructions_file.name}**")
-            
-            # Afficher les feuilles détectées
-            col_a, col_b = st.columns(2)
-            with col_a:
-                st.markdown("**📑 Feuilles détectées:**")
-                for sheet in load_info["sheets_found"]:
-                    marker = ""
-                    if sheet == load_info["questionnaire_sheet"]:
-                        marker = " 🔵 (Questionnaire)"
-                    elif sheet == load_info["instructions_sheet"]:
-                        marker = " 🟢 (Instructions)"
-                    st.markdown(f"- `{sheet}`{marker}")
-            
-            with col_b:
-                st.metric("📋 Règles détectées", load_info["nb_rules"])
-                st.metric("❓ Questions", load_info["nb_rows_questionnaire"])
-            
-            # Permettre à l'utilisateur de réassigner les feuilles si auto-détection incorrecte
-            with st.expander("🔧 Modifier l'attribution des feuilles"):
-                sheets = load_info["sheets_found"]
-                
-                q_sheet = st.selectbox(
-                    "Feuille du questionnaire",
-                    sheets,
-                    index=sheets.index(load_info["questionnaire_sheet"]) if load_info["questionnaire_sheet"] in sheets else 0
-                )
-                
-                i_sheet = st.selectbox(
-                    "Feuille des instructions",
-                    sheets,
-                    index=sheets.index(load_info["instructions_sheet"]) if load_info["instructions_sheet"] in sheets else (1 if len(sheets) > 1 else 0)
-                )
-                
-                if st.button("🔄 Réassigner"):
-                    parser.questionnaire_df = parser.all_sheets[q_sheet]
-                    parser.instructions_df = parser.all_sheets[i_sheet]
-                    parser.questionnaire_sheet_name = q_sheet
-                    parser.instructions_sheet_name = i_sheet
-                    st.rerun()
-            
-            # Aperçu du questionnaire
-            st.markdown("---")
-            st.subheader("📝 Aperçu du questionnaire (Feuille 1)")
-            if parser.questionnaire_df is not None:
-                st.dataframe(parser.questionnaire_df.head(10), use_container_width=True)
-            
-            # Aperçu des instructions
-            st.subheader("📜 Aperçu des instructions de vérification (Feuille 2)")
-            if parser.instructions_df is not None:
-                st.dataframe(parser.instructions_df, use_container_width=True)
-            
-            # Parser les règles
-            if st.button("⚙️ Parser les règles automatiquement", type="primary", use_container_width=True):
-                with st.spinner("Analyse des règles en cours..."):
-                    rules = parser.parse_rules()
-                
-                st.session_state.business_rules = rules
-                st.session_state.instructions_summary = parser.get_rules_summary()
-                
-                st.success(f"✅ **{len(rules)} règles** parsées et prêtes à être appliquées")
-                
-                # Résumé
-                summary = parser.get_rules_summary()
-                
-                col1, col2, col3 = st.columns(3)
-                with col1:
-                    st.metric("Total règles", summary.get("total", 0))
-                with col2:
-                    critique = summary.get("par_severite", {}).get("critique", 0)
-                    st.metric("🔴 Critiques", critique)
-                with col3:
-                    types_count = len(summary.get("par_type", {}))
-                    st.metric("Types de règles", types_count)
-                
-                # Détail par type
-                if summary.get("par_type"):
-                    st.markdown("**📊 Répartition par type:**")
-                    type_df = pd.DataFrame([
-                        {"Type": k, "Nombre": v}
-                        for k, v in summary["par_type"].items()
-                    ])
-                    st.bar_chart(type_df.set_index("Type"))
-                
-                # Tableau des règles
-                st.markdown("---")
-                st.subheader("📜 Règles parsées")
-                rules_display = pd.DataFrame([
-                    {
-                        "ID": r["id"],
-                        "Description": r["description"][:100] + ("..." if len(r["description"]) > 100 else ""),
-                        "Colonne": r["colonne_cible"],
-                        "Sévérité": r["severite"],
-                        "Type": r["type"]
-                    }
-                    for r in rules
-                ])
-                st.dataframe(rules_display, use_container_width=True, height=400)
-                
-                # Détail d'une règle
-                with st.expander("🔍 Voir le détail d'une règle"):
-                    rule_id = st.selectbox("Sélectionnez une règle", [r["id"] for r in rules])
-                    selected_rule = next((r for r in rules if r["id"] == rule_id), None)
-                    if selected_rule:
-                        st.json(selected_rule)
-        
-        except Exception as e:
-            st.error(f"❌ Erreur lors du chargement: {e}")
-            st.exception(e)
-    
-    # Afficher l'état actuel
-    if st.session_state.business_rules:
-        st.markdown("---")
-        st.success(f"✅ **{len(st.session_state.business_rules)} règles métier** chargées et prêtes")
-    else:
-        st.info("ℹ️ Aucune règle métier chargée. La validation utilisera uniquement les règles génériques.")
+    st.header("📋 Règles de vérification SGA — codées en dur")
+    st.markdown("Ces 7 règles sont appliquées automatiquement à chaque validation. Aucun fichier d'instructions à charger.")
+
+    rules_info = [
+        ("R1", "critique",  "Couverture agence",
+         "Chaque agence doit avoir exactement **3 visites**. Toute agence avec moins ou plus de 3 visites est signalée."),
+        ("R2", "critique",  "Mix profils PRI/PRO",
+         "Par agence : au moins **2 visites PRI + 1 PRO**, ou **1 PRI + 2 PRO**. Un mix homogène (3 PRI ou 3 PRO) est invalide."),
+        ("R3", "modérée",   "Diversité des scénarios",
+         "Les 3 visites d'une agence doivent avoir des **scénarios différents** (PRI, PRO, CORPO). Les doublons de scénario sont signalés."),
+        ("R4", "modérée",   "Cohérence note / satisfaction / recommandation",
+         "Une note ≥ 8 doit correspondre à *Satisfait* ou *Très satisfait*. Une note ≤ 4 doit correspondre à *Insatisfait*. Incohérence entre satisfaction et recommandation également vérifiée."),
+        ("R5", "modérée",   "Cohérence heure de visite / créneau déclaré",
+         "L'heure réelle de visite doit tomber dans le créneau horaire coché par l'enquêteur (ex : 13h30–15h30)."),
+        ("R6", "mineure",   "Cohérence temps d'attente / créneau",
+         "Le nombre de minutes d'attente déclaré doit correspondre à la tranche cochée (0–5 min, 6–10 min, etc.)."),
+        ("R7", "mineure",   "Cohérence temps conseiller / créneau",
+         "Le temps passé avec le conseiller (en minutes) doit correspondre à la tranche cochée."),
+    ]
+
+    sev_colors = {"critique": "🔴", "modérée": "🟠", "mineure": "🟡"}
+
+    for rid, sev, title, desc in rules_info:
+        icon = sev_colors.get(sev, "⚪")
+        with st.expander(f"{icon} **{rid}** — {title}  *({sev})*", expanded=False):
+            st.markdown(desc)
+
+    st.markdown("---")
+    st.info("Pour modifier ou ajouter une règle, contactez l'équipe Dusens Research.")
 
 
-# ============= TAB 3 : ANALYSE IA =============
+# ============= TAB 3 : VALIDATION SGA =============
 with tab3:
-    st.header("🤖 Analyse intelligente par Claude")
-    
+    st.header("🚀 Validation SGA")
+
+    if st.session_state.df is None:
+        st.warning("⚠️ Commencez par téléverser votre fichier dans l'onglet 1.")
+    else:
+        df = st.session_state.df
+        st.info(f"Fichier chargé : **{len(df)} lignes × {len(df.columns)} colonnes**")
+        st.markdown("Les **7 règles SGA** vont être appliquées à l'ensemble du fichier. Cliquez sur le bouton ci-dessous.")
+
+        if st.button("▶️ Lancer la validation complète", type="primary", use_container_width=True):
+            with st.spinner("Validation en cours..."):
+                try:
+                    validator = SGAValidator(df)
+                    df_data, df_corrections = validator.run()
+                    summary = validator.get_summary()
+
+                    st.session_state.sga_df_data        = df_data
+                    st.session_state.sga_df_corrections = df_corrections
+                    st.session_state.sga_summary        = summary
+                    st.session_state.analysis_done      = True
+
+                except Exception as e:
+                    st.error(f"Erreur lors de la validation : {e}")
+                    st.exception(e)
+
+        if st.session_state.sga_summary:
+            s = st.session_state.sga_summary
+            st.markdown("---")
+            st.subheader("📊 Résumé")
+
+            c1, c2, c3, c4 = st.columns(4)
+            c1.metric("Lignes analysées",        s['lignes_total'])
+            c2.metric("Lignes avec problème",     s['lignes_avec_erreur'])
+            c3.metric("Erreurs critiques",        s['by_severite'].get('critique', 0))
+            c4.metric("Erreurs modérées/mineures",s['by_severite'].get('moderee', 0) + s['by_severite'].get('mineure', 0))
+
+            st.markdown("**Détail par règle :**")
+            rule_df = pd.DataFrame([
+                {"Règle": k, "Nb erreurs": v}
+                for k, v in sorted(s['by_rule'].items())
+            ])
+            if not rule_df.empty:
+                st.bar_chart(rule_df.set_index('Règle'))
+
+            st.markdown("---")
+            st.success("✅ Validation terminée. Rendez-vous dans l'onglet **4. Télécharger les résultats**.")
+
+# ============= TAB 4 : TÉLÉCHARGER =============
+with tab4:
+    st.header("📥 Télécharger les résultats")
+
+    if not st.session_state.analysis_done or st.session_state.sga_df_data is None:
+        st.warning("⚠️ Lancez d'abord la validation dans l'onglet 3.")
+    else:
+        s = st.session_state.sga_summary
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Total erreurs", s['total_erreurs'])
+        c2.metric("Lignes avec problème", s['lignes_avec_erreur'])
+        c3.metric("Lignes propres", s['lignes_total'] - s['lignes_avec_erreur'])
+
+        st.markdown("---")
+
+        # Génération des fichiers Excel
+        with st.spinner("Génération des fichiers Excel..."):
+            excel_bytes = export_to_excel(
+                st.session_state.sga_df_data,
+                st.session_state.sga_df_corrections
+            )
+
+        now = datetime.now().strftime('%Y%m%d_%H%M')
+
+        col1, col2 = st.columns(2)
+
+        with col1:
+            st.subheader("📄 Fichier 1 — Données vérifiées")
+            st.markdown("""
+            Contient **toutes vos données originales** + 3 colonnes ajoutées au début :
+            - `Nb_problèmes` : nombre d'incohérences sur cette ligne
+            - `Règles_violées` : quelles règles (R1, R2…)
+            - `Détail_problèmes` : explication complète
+
+            **Code couleur :**
+            - 🟢 Vert = ligne correcte
+            - 🟡 Orange = erreur modérée/mineure
+            - 🔴 Rouge = erreur critique (R1 ou R2)
+            """)
+
+        with col2:
+            st.subheader("📋 Fichier 2 — Corrections suggérées")
+            st.markdown("""
+            Contient **une ligne par erreur détectée**, avec :
+            - La ligne concernée, l'agence, la wilaya
+            - La règle violée et son explication
+            - La **valeur actuelle** et la **correction suggérée**
+
+            Trié par sévérité (critiques en premier).
+            """)
+
+        st.markdown("---")
+
+        st.download_button(
+            label="⬇️ Télécharger le fichier Excel complet (2 feuilles)",
+            data=excel_bytes,
+            file_name=f"SGA_validation_{now}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True,
+            type="primary"
+        )
+
+        st.markdown("---")
+        st.subheader("👁️ Aperçu des corrections")
+        st.dataframe(st.session_state.sga_df_corrections.head(50), use_container_width=True, height=400)
+
+# ============= TAB 5 : ANALYSE IA (OPTIONNEL) =============
+with tab5:
+    st.header("🤖 Analyse IA supplémentaire (optionnel)")
+    st.info("Cette fonctionnalité utilise Mistral AI pour détecter des incohérences supplémentaires non couvertes par les 7 règles SGA. Elle nécessite une clé MISTRAL_API_KEY valide.")
+
     if st.session_state.df is None:
         st.warning("⚠️ Veuillez d'abord téléverser un fichier dans l'onglet 1")
     else:
-        # Indicateur règles métier
-        if st.session_state.business_rules:
-            st.success(f"✅ {len(st.session_state.business_rules)} règles métier chargées seront intégrées à l'analyse")
-        else:
-            st.info("ℹ️ Aucune règle métier chargée. Claude utilisera ses règles génériques. Pour de meilleurs résultats, chargez vos instructions dans l'onglet 2.")
-        
-        st.markdown("""
-        Claude va analyser la **structure de votre étude** pour:
-        - Identifier le type et le secteur
-        - Mapper vos règles métier aux colonnes du fichier
-        - Détecter les questions à branchement (skip logic)
-        - Proposer des règles supplémentaires
-        """)
-        
-        if st.button("🚀 Lancer l'analyse de structure", type="primary", use_container_width=True):
+        if st.button("🚀 Lancer l'analyse IA", type="secondary", use_container_width=True):
             try:
                 analyzer = ClaudeAnalyzer(
                     model="mistral-large-latest" if "précis" in model_choice else "mistral-small-latest"
                 )
-                
-                with st.spinner("🧠 Llama analyse votre étude... (peut prendre 30-60 sec)"):
-                    if st.session_state.business_rules:
-                        # Analyse avec règles métier
-                        structure = analyzer.analyze_with_business_rules(
-                            questionnaire_columns=list(st.session_state.df.columns),
-                            sample_data=st.session_state.df.head(5).to_dict('records'),
-                            business_rules=st.session_state.business_rules,
-                            study_type=study_type,
-                            custom_prompt=custom_prompt
-                        )
-                    else:
-                        # Analyse générique
-                        structure = analyzer.analyze_structure(
-                            questions=list(st.session_state.df.columns),
-                            sample_data=st.session_state.df.head(5).to_dict('records'),
-                            study_type=study_type,
-                            custom_prompt=custom_prompt
-                        )
-                
+                with st.spinner("🧠 Analyse IA en cours..."):
+                    structure = analyzer.analyze_structure(
+                        questions=list(st.session_state.df.columns),
+                        sample_data=st.session_state.df.head(3).to_dict('records'),
+                        study_type=study_type,
+                        custom_prompt=custom_prompt
+                    )
                 st.session_state.structure_analysis = structure
-                
-                # Parser la réponse
-                try:
-                    import re
-                    json_match = re.search(r'\{.*\}', structure, re.DOTALL)
-                    if json_match:
-                        parsed = json.loads(json_match.group())
-                    else:
-                        parsed = {"raw": structure}
-                except:
-                    parsed = {"raw": structure}
-                
-                # Combiner règles métier + règles auto-détectées
-                auto_rules = parsed.get("regles_supplementaires", []) or parsed.get("regles", []) or parsed.get("rules", [])
-                st.session_state.rules = st.session_state.business_rules + auto_rules
-                
-                # Affichage
-                st.success(f"✅ Analyse terminée! ({len(st.session_state.rules)} règles au total)")
-                
-                col1, col2 = st.columns(2)
-                
-                with col1:
-                    st.subheader("📊 Synthèse")
-                    if "type_etude" in parsed:
-                        st.info(f"**Type identifié:** {parsed['type_etude']}")
-                    if "secteur" in parsed:
-                        st.info(f"**Secteur:** {parsed['secteur']}")
-                    if "questions_critiques" in parsed:
-                        st.markdown("**🎯 Questions critiques:**")
-                        for q in parsed["questions_critiques"]:
-                            st.markdown(f"- {q}")
-                
-                with col2:
-                    st.subheader("🔗 Mapping règles métier")
-                    if "regles_metier_mappees" in parsed:
-                        for mapping in parsed["regles_metier_mappees"]:
-                            st.markdown(f"**{mapping.get('id_regle')}** → `{mapping.get('colonne_questionnaire')}`")
-                            st.caption(mapping.get('interpretation', ''))
-                    else:
-                        st.markdown("**Règles auto-détectées:**")
-                        for rule in auto_rules[:5]:
-                            if isinstance(rule, dict):
-                                st.markdown(f"- {rule.get('description', rule)}")
-                
-                with st.expander("🔍 Voir la réponse complète de Claude"):
-                    st.json(parsed)
-                
+                import re as _re
+                json_match = _re.search(r'\{.*\}', structure, _re.DOTALL)
+                parsed = json.loads(json_match.group()) if json_match else {"raw": structure}
+                st.success("✅ Analyse IA terminée")
+                st.json(parsed)
             except Exception as e:
-                st.error(f"❌ Erreur: {e}")
+                st.error(f"Erreur: {e}")
                 st.info("Vérifiez que votre clé MISTRAL_API_KEY est bien configurée dans le fichier .env")
-
-# ============= TAB 4 : VALIDATION =============
-with tab4:
-    st.header("🔎 Validation détaillée des données")
-    
-    if st.session_state.df is None:
-        st.warning("⚠️ Veuillez d'abord téléverser un fichier")
-    elif st.session_state.structure_analysis is None:
-        st.warning("⚠️ Lancez d'abord l'analyse de structure (Onglet 2)")
-    else:
-        st.markdown("Cette étape valide chaque ligne selon les règles détectées et vos critères personnalisés.")
-        
-        col1, col2 = st.columns(2)
-        with col1:
-            rows_to_check = st.slider(
-                "Nombre de lignes à vérifier",
-                min_value=10,
-                max_value=min(len(st.session_state.df), max_rows),
-                value=min(len(st.session_state.df), max_rows)
-            )
-        with col2:
-            validation_depth = st.radio(
-                "Profondeur de validation",
-                ["⚡ Rapide (règles locales)", "🤖 Approfondie (IA Claude)", "🔥 Complète (les deux)"],
-                index=2
-            )
-        
-        if st.button("▶️ Lancer la validation", type="primary", use_container_width=True):
-            errors_all = []
-            df_subset = st.session_state.df.head(rows_to_check)
-            
-            # ===== Validation locale =====
-            if "Rapide" in validation_depth or "Complète" in validation_depth:
-                st.subheader("⚡ Validation locale (règles automatiques)")
-                local_validator = LocalValidator(
-                    check_skip_logic=check_skip_logic,
-                    check_outliers=check_outliers,
-                    check_comments=check_comments,
-                    check_duplicates=check_duplicates,
-                    check_dates=check_dates
-                )
-                
-                with st.spinner("Validation locale en cours..."):
-                    local_errors = local_validator.validate(df_subset)
-                
-                errors_all.extend(local_errors)
-                st.success(f"✅ Validation locale terminée: **{len(local_errors)} anomalies** détectées")
-            
-            # ===== Validation IA =====
-            if "Approfondie" in validation_depth or "Complète" in validation_depth:
-                st.subheader("🤖 Validation IA (Claude)")
-                
-                analyzer = ClaudeAnalyzer(
-                    model="mistral-large-latest" if "précis" in model_choice else "mistral-small-latest"
-                )
-                
-                progress_bar = st.progress(0)
-                status_text = st.empty()
-                
-                # Traitement par batches
-                rows_list = df_subset.to_dict('records')
-                total_batches = (len(rows_list) + batch_size - 1) // batch_size
-                
-                for batch_idx in range(total_batches):
-                    start = batch_idx * batch_size
-                    end = min(start + batch_size, len(rows_list))
-                    batch = rows_list[start:end]
-                    
-                    status_text.text(f"Batch {batch_idx + 1}/{total_batches} - Lignes {start+1} à {end}")
-                    
-                    try:
-                        batch_errors = analyzer.validate_batch(
-                            rows=batch,
-                            rules=st.session_state.rules,
-                            start_row=start + 1,
-                            custom_prompt=custom_prompt
-                        )
-                        errors_all.extend(batch_errors)
-                    except Exception as e:
-                        st.warning(f"⚠️ Erreur batch {batch_idx + 1}: {e}")
-                    
-                    progress_bar.progress((batch_idx + 1) / total_batches)
-                
-                status_text.text("✅ Validation IA terminée!")
-            
-            # Stocker les erreurs
-            st.session_state.errors_found = errors_all
-            st.session_state.analysis_done = True
-            
-            # Affichage résultats
-            st.markdown("---")
-            st.subheader("📋 Résultats")
-            
-            if not errors_all:
-                st.markdown('<div class="success-box"><h3>✅ Aucune anomalie détectée!</h3><p>Vos données semblent cohérentes.</p></div>', unsafe_allow_html=True)
-            else:
-                # Stats par sévérité
-                severities = {}
-                for err in errors_all:
-                    sev = err.get('severite', 'info')
-                    severities[sev] = severities.get(sev, 0) + 1
-                
-                col1, col2, col3 = st.columns(3)
-                col1.metric("🔴 Critiques", severities.get('critique', 0))
-                col2.metric("🟠 Modérées", severities.get('moderee', 0) + severities.get('warning', 0))
-                col3.metric("🟡 Mineures", severities.get('mineure', 0) + severities.get('info', 0))
-                
-                # Tableau d'erreurs
-                errors_df = pd.DataFrame(errors_all)
-                st.dataframe(errors_df, use_container_width=True, height=400)
-
-# ============= TAB 5 : RAPPORT =============
-with tab5:
-    st.header("📊 Rapport & Export")
-    
-    if not st.session_state.analysis_done:
-        st.warning("⚠️ Lancez d'abord une validation (Onglet 3)")
-    else:
-        st.success(f"✅ {len(st.session_state.errors_found)} anomalies trouvées")
-        
-        # Génération rapport
-        generator = ReportGenerator(
-            df=st.session_state.df,
-            errors=st.session_state.errors_found,
-            structure=st.session_state.structure_analysis
-        )
-        
-        # Visualisations
-        if st.session_state.errors_found:
-            st.subheader("📈 Visualisations")
-            
-            errors_df = pd.DataFrame(st.session_state.errors_found)
-            
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                if 'colonne' in errors_df.columns:
-                    by_col = errors_df['colonne'].value_counts().head(10)
-                    st.bar_chart(by_col)
-                    st.caption("Top 10 colonnes avec erreurs")
-            
-            with col2:
-                if 'type_erreur' in errors_df.columns:
-                    by_type = errors_df['type_erreur'].value_counts()
-                    st.bar_chart(by_type)
-                    st.caption("Répartition par type d'erreur")
-        
-        st.markdown("---")
-        st.subheader("📥 Export des résultats")
-        
-        col1, col2, col3 = st.columns(3)
-        
-        with col1:
-            # Export CSV
-            csv_data = generator.to_csv()
-            st.download_button(
-                "📄 Télécharger CSV",
-                csv_data,
-                f"rapport_erreurs_{datetime.now().strftime('%Y%m%d_%H%M')}.csv",
-                "text/csv",
-                use_container_width=True
-            )
-        
-        with col2:
-            # Export Excel avec corrections
-            excel_data = generator.to_excel_with_corrections()
-            st.download_button(
-                "📊 Excel avec corrections",
-                excel_data,
-                f"donnees_corrigees_{datetime.now().strftime('%Y%m%d_%H%M')}.xlsx",
-                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                use_container_width=True
-            )
-        
-        with col3:
-            # Rapport HTML
-            html_report = generator.to_html_report()
-            st.download_button(
-                "📑 Rapport HTML",
-                html_report,
-                f"rapport_{datetime.now().strftime('%Y%m%d_%H%M')}.html",
-                "text/html",
-                use_container_width=True
-            )
 
 # ============= FOOTER =============
 st.markdown("---")
