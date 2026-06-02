@@ -571,28 +571,43 @@ def export_to_excel(df_data: pd.DataFrame, df_corrections: pd.DataFrame) -> byte
     wb = openpyxl.Workbook()
 
     # ================================================================
-    # FEUILLE 1 : Données vérifiées
+    # FEUILLE 1 : Résumé (colonnes clés + flags) — lisible directement
     # ================================================================
     ws1 = wb.active
-    ws1.title = 'Donnees_verifiees'
+    ws1.title = 'Resume_problemes'
 
-    # Écrire les en-têtes
-    cols1 = list(df_data.columns)
-    for ci, col in enumerate(cols1, 1):
+    # Sélectionner colonnes clés : flags + identification + profil + date
+    flag_cols = ['Nb_problèmes', 'Règles_violées', 'Détail_problèmes']
+    id_keywords = ['sbjnum', 'srvyr', 'banque', 'wilaya', 'date', 'profil', 'enqueteur',
+                   'adress', 'alger', 'oran', 'annaba', 'constantine', 'blida', 'tizi',
+                   'setif', 'batna', 'mostaganem', 'bejaia', 'msila', 'relizane']
+    key_cols = flag_cols[:]
+    for col in df_data.columns:
+        if col in flag_cols:
+            continue
+        cn = normalize(col)
+        if any(k in cn for k in id_keywords):
+            key_cols.append(col)
+        if len(key_cols) >= 20:
+            break
+
+    df_resume = df_data[key_cols]
+
+    # Écrire en-têtes
+    for ci, col in enumerate(key_cols, 1):
         cell = ws1.cell(row=1, column=ci, value=str(col))
-        cell.fill  = BLEU_HEADER
-        cell.font  = FONT_HEADER
+        cell.fill = BLEU_HEADER
+        cell.font = FONT_HEADER
         cell.alignment = Alignment(horizontal='center', wrap_text=True)
 
-    # Écrire les données ligne par ligne
-    for ri, (_, row) in enumerate(df_data.iterrows(), 2):
-        # Déterminer la couleur selon Nb_problèmes et Règles_violées
+    # Écrire données
+    for ri, (_, row) in enumerate(df_resume.iterrows(), 2):
         nb = 0
         rules_val = ''
         try:
-            nb = int(row.get('Nb_problèmes', row.iloc[0]) or 0)
-            rules_val = str(row.get('Règles_violées', row.iloc[1]) or '')
-        except (ValueError, TypeError, IndexError):
+            nb = int(row.iloc[0] or 0)
+            rules_val = str(row.iloc[1] or '')
+        except (ValueError, TypeError):
             pass
 
         if nb == 0:
@@ -604,25 +619,64 @@ def export_to_excel(df_data: pd.DataFrame, df_corrections: pd.DataFrame) -> byte
 
         for ci, val in enumerate(row, 1):
             cell = ws1.cell(row=ri, column=ci)
-            # Convertir les valeurs non sérialisables
+            cell.fill = row_fill
             if pd.isna(val) if not isinstance(val, (list, dict)) else False:
                 cell.value = None
-            elif hasattr(val, 'item'):  # numpy types
+            elif hasattr(val, 'item'):
                 cell.value = val.item()
             else:
                 try:
                     cell.value = val
                 except Exception:
                     cell.value = str(val)
-            # Colorer seulement les 3 premières colonnes (flags)
-            if ci <= 3:
-                cell.fill = row_fill
 
-    # Largeurs colonnes
-    ws1.column_dimensions['A'].width = 14
-    ws1.column_dimensions['B'].width = 22
-    ws1.column_dimensions['C'].width = 70
-    ws1.freeze_panes = 'D2'
+    # Largeurs
+    col_widths_r = [12, 20, 80, 14, 12, 10, 12, 40, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12]
+    for i, w in enumerate(col_widths_r, 1):
+        if i <= len(key_cols):
+            ws1.column_dimensions[get_column_letter(i)].width = w
+    ws1.freeze_panes = 'A2'
+    ws1.sheet_view.topLeftCell = 'A1'
+
+    # ================================================================
+    # FEUILLE 2 (optionnelle) : Toutes les données originales + flags
+    # ================================================================
+    ws_full = wb.create_sheet('Toutes_les_donnees')
+
+    cols_full = list(df_data.columns)
+    for ci, col in enumerate(cols_full, 1):
+        cell = ws_full.cell(row=1, column=ci, value=str(col))
+        cell.fill = BLEU_HEADER
+        cell.font = FONT_HEADER
+
+    for ri, (_, row) in enumerate(df_data.iterrows(), 2):
+        nb = 0
+        rules_val = ''
+        try:
+            nb = int(row.iloc[0] or 0)
+            rules_val = str(row.iloc[1] or '')
+        except (ValueError, TypeError):
+            pass
+        fill = VERT_CLAIR if nb == 0 else (ROUGE_CLAIR if 'R1' in rules_val or 'R2' in rules_val else ORANGE_CLAIR)
+
+        for ci, val in enumerate(row, 1):
+            cell = ws_full.cell(row=ri, column=ci)
+            if ci <= 3:
+                cell.fill = fill
+            if pd.isna(val) if not isinstance(val, (list, dict)) else False:
+                cell.value = None
+            elif hasattr(val, 'item'):
+                cell.value = val.item()
+            else:
+                try:
+                    cell.value = val
+                except Exception:
+                    cell.value = str(val)
+
+    for col_letter, width in [('A',12),('B',20),('C',70)]:
+        ws_full.column_dimensions[col_letter].width = width
+    ws_full.freeze_panes = 'A2'
+    ws_full.sheet_view.topLeftCell = 'A1'
 
     # ================================================================
     # FEUILLE 2 : Corrections
