@@ -79,27 +79,108 @@ def get_agence_id(row: pd.Series, city_cols: List[str]) -> str:
     return 'AGENCE_INCONNUE'
 
 
+# Dictionnaire des créneaux horaires connus (format spécifique à cet outil d'enquête)
+# Format encodé : heure_début + 'h' + minutes_début(sans zéro final) + heure_fin + 'h' + minutes_fin
+TIME_SLOT_LOOKUP: Dict[str, Tuple[int, int, int, int]] = {
+    '9h301h30':   (9,  30, 11, 30),
+    '11h313h30':  (11, 30, 13, 30),
+    '13h315h30':  (13, 30, 15, 30),
+    '8h001h00':   (8,  0,  11, 0),
+    '8h3010h30':  (8,  30, 10, 30),
+    '10h312h30':  (10, 30, 12, 30),
+    '15h317h30':  (15, 30, 17, 30),
+}
+
+# Dictionnaire des créneaux en minutes (formats encodés sans tiret)
+MINUTE_SLOT_LOOKUP: Dict[str, Tuple[int, int]] = {
+    '0 - 5 MINUTES':      (0,  5),
+    '0-5 MINUTES':        (0,  5),
+    '0 5 MINUTES':        (0,  5),
+    '05 MINUTES':         (0,  5),
+    '6 0 MINUTES':        (6,  10),
+    '60 MINUTES':         (6,  10),
+    '6-10 MINUTES':       (6,  10),
+    '6 10 MINUTES':       (6,  10),
+    '610 MINUTES':        (6,  10),
+    '115 MINUTES':        (11, 15),
+    '11-15 MINUTES':      (11, 15),
+    '11 5 MINUTES':       (11, 15),
+    '1115 MINUTES':       (11, 15),
+    '16-20 MINUTES':      (16, 20),
+    '1620 MINUTES':       (16, 20),
+    '16 20 MINUTES':      (16, 20),
+    'PLUS DE 20 MINUTES': (21, 999),
+    '+20 MINUTES':        (21, 999),
+    '>20 MINUTES':        (21, 999),
+    '> 20 MINUTES':       (21, 999),
+    'PLUS 20 MINUTES':    (21, 999),
+}
+
+
 def parse_time_slot(slot) -> Optional[Tuple[int, int, int, int]]:
-    """Parse '13h315h30' ou '13h30-15h30' → (h_start, m_start, h_end, m_end)"""
+    """Parse un créneau horaire de visite → (h_start, m_start, h_end, m_end)"""
     if pd.isna(slot):
         return None
-    s = str(slot).replace(' ', '')
-    match = re.search(r'(\d{1,2})[hH](\d{2})[-–]?(\d{1,2})[hH](\d{2})', s)
+    s = str(slot).strip().replace(' ', '')
+
+    # 1. Chercher dans le dictionnaire connu
+    key = s.upper()
+    if key in TIME_SLOT_LOOKUP:
+        return TIME_SLOT_LOOKUP[key]
+    # Variante lowercase
+    for k, v in TIME_SLOT_LOOKUP.items():
+        if k.upper() == key:
+            return v
+
+    # 2. Regex standard avec séparateur (tiret, espace, 'à')
+    match = re.search(r'(\d{1,2})[hH](\d{2})\s*[-–à]\s*(\d{1,2})[hH](\d{2})', s)
     if match:
         return int(match.group(1)), int(match.group(2)), int(match.group(3)), int(match.group(4))
+
+    # 3. Deux occurrences 'Xh00' dans la chaîne (ex: '13h0015h00')
+    all_times = re.findall(r'(\d{1,2})[hH](\d{2})', s)
+    if len(all_times) >= 2:
+        h1, m1 = int(all_times[0][0]), int(all_times[0][1])
+        h2, m2 = int(all_times[-1][0]), int(all_times[-1][1])
+        # Valider que c'est un créneau logique (fin > début)
+        if h2 * 60 + m2 > h1 * 60 + m1:
+            return h1, m1, h2, m2
+
     return None
 
 
 def parse_minute_slot(slot) -> Optional[Tuple[int, int]]:
-    """Parse '0 - 5 MINUTES' → (0, 5), '>20 MINUTES' → (21, 999)"""
+    """Parse un créneau de durée en minutes → (min_low, min_high)"""
     if pd.isna(slot):
         return None
-    s = str(slot).upper()
-    if '>20' in s or '> 20' in s:
+    s = str(slot).strip().upper()
+
+    # 1. Dictionnaire des formats connus
+    if s in MINUTE_SLOT_LOOKUP:
+        return MINUTE_SLOT_LOOKUP[s]
+
+    # 2. Mots-clés >20
+    if any(x in s for x in ['>20', '> 20', 'PLUS DE 20', 'PLUS 20', '+20']):
         return (21, 999)
+
+    # 3. Regex standard: "N - M" ou "N-M"
     match = re.search(r'(\d+)\s*[-–]\s*(\d+)', s)
     if match:
         return int(match.group(1)), int(match.group(2))
+
+    # 4. Deux nombres collés sans séparateur (ex: '115' = 11-15, '610' = 6-10)
+    digits = re.findall(r'\d+', s)
+    if len(digits) == 1:
+        d = digits[0]
+        if len(d) == 3:   # ex: '115' → 11-15 ou '060' → 6-10...
+            # Essai: premiers chiffres = borne basse, derniers = borne haute
+            for split in [1, 2]:
+                lo, hi = int(d[:split]), int(d[split:])
+                if 0 <= lo < hi <= 60:
+                    return (lo, hi)
+        if len(d) == 2:   # ex: '60' → 6-10?  Ambiguous, on skip
+            pass
+
     return None
 
 

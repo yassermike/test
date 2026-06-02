@@ -295,6 +295,26 @@ with tab3:
         st.info(f"Fichier chargé : **{len(df)} lignes × {len(df.columns)} colonnes**")
         st.markdown("Les **7 règles SGA** vont être appliquées à l'ensemble du fichier. Cliquez sur le bouton ci-dessous.")
 
+        # Afficher les colonnes détectées
+        with st.expander("🔍 Colonnes détectées dans votre fichier"):
+            try:
+                v_check = SGAValidator(df)
+                st.write({
+                    "Profil client": v_check.col_profil,
+                    "Scénario PRI": v_check.col_scen_pri,
+                    "Scénario PRO": v_check.col_scen_pro,
+                    "Heure visite": v_check.col_heure,
+                    "Créneau heure": v_check.col_heure_grille,
+                    "Temps attente (min)": v_check.col_att_min,
+                    "Créneau attente": v_check.col_att_grille,
+                    "Note valorisation": v_check.col_note,
+                    "Satisfaction": v_check.col_satisfaction,
+                    "Recommandation": v_check.col_recommandation,
+                    "Nb colonnes agence": len(v_check.city_cols),
+                })
+            except Exception as ex:
+                st.warning(f"Détection colonnes: {ex}")
+
         if st.button("▶️ Lancer la validation complète", type="primary", use_container_width=True):
             with st.spinner("Validation en cours..."):
                 try:
