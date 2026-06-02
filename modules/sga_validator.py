@@ -559,87 +559,125 @@ def _apply_header_style(ws, row=1):
 
 def export_to_excel(df_data: pd.DataFrame, df_corrections: pd.DataFrame) -> bytes:
     """
-    Génère les 2 feuilles dans un seul fichier Excel avec mise en forme.
+    Génère un fichier Excel avec 2 feuilles et mise en forme basique.
     Retourne les bytes du fichier.
     """
-    output = io.BytesIO()
-
     ROUGE_CLAIR  = PatternFill(fill_type='solid', fgColor='FFCCCC')
     ORANGE_CLAIR = PatternFill(fill_type='solid', fgColor='FFE5CC')
     VERT_CLAIR   = PatternFill(fill_type='solid', fgColor='E2EFDA')
+    BLEU_HEADER  = PatternFill(fill_type='solid', fgColor='1F4E79')
+    FONT_HEADER  = Font(bold=True, color='FFFFFF', size=10)
 
-    with pd.ExcelWriter(output, engine='openpyxl') as writer:
-        # ---- Feuille 1 : Données + flags ----
-        df_data.to_excel(writer, sheet_name='Données_vérifiées', index=False)
-        ws1 = writer.sheets['Données_vérifiées']
-        _apply_header_style(ws1)
+    wb = openpyxl.Workbook()
 
-        # Colorer les lignes selon nb_problèmes
-        nb_col_idx = 1  # colonne A = Nb_problèmes
-        for row_idx in range(2, ws1.max_row + 1):
-            nb_cell = ws1.cell(row=row_idx, column=nb_col_idx)
+    # ================================================================
+    # FEUILLE 1 : Données vérifiées
+    # ================================================================
+    ws1 = wb.active
+    ws1.title = 'Donnees_verifiees'
+
+    # Écrire les en-têtes
+    cols1 = list(df_data.columns)
+    for ci, col in enumerate(cols1, 1):
+        cell = ws1.cell(row=1, column=ci, value=str(col))
+        cell.fill  = BLEU_HEADER
+        cell.font  = FONT_HEADER
+        cell.alignment = Alignment(horizontal='center', wrap_text=True)
+
+    # Écrire les données ligne par ligne
+    for ri, (_, row) in enumerate(df_data.iterrows(), 2):
+        # Déterminer la couleur selon Nb_problèmes et Règles_violées
+        nb = 0
+        rules_val = ''
+        try:
+            nb = int(row.get('Nb_problèmes', row.iloc[0]) or 0)
+            rules_val = str(row.get('Règles_violées', row.iloc[1]) or '')
+        except (ValueError, TypeError, IndexError):
+            pass
+
+        if nb == 0:
+            row_fill = VERT_CLAIR
+        elif 'R1' in rules_val or 'R2' in rules_val:
+            row_fill = ROUGE_CLAIR
+        else:
+            row_fill = ORANGE_CLAIR
+
+        for ci, val in enumerate(row, 1):
+            cell = ws1.cell(row=ri, column=ci)
+            # Convertir les valeurs non sérialisables
+            if pd.isna(val) if not isinstance(val, (list, dict)) else False:
+                cell.value = None
+            elif hasattr(val, 'item'):  # numpy types
+                cell.value = val.item()
+            else:
+                try:
+                    cell.value = val
+                except Exception:
+                    cell.value = str(val)
+            # Colorer seulement les 3 premières colonnes (flags)
+            if ci <= 3:
+                cell.fill = row_fill
+
+    # Largeurs colonnes
+    ws1.column_dimensions['A'].width = 14
+    ws1.column_dimensions['B'].width = 22
+    ws1.column_dimensions['C'].width = 70
+    ws1.freeze_panes = 'D2'
+
+    # ================================================================
+    # FEUILLE 2 : Corrections
+    # ================================================================
+    ws2 = wb.create_sheet('Corrections_suggerees')
+
+    cols2 = list(df_corrections.columns)
+    for ci, col in enumerate(cols2, 1):
+        cell = ws2.cell(row=1, column=ci, value=str(col))
+        cell.fill  = BLEU_HEADER
+        cell.font  = FONT_HEADER
+        cell.alignment = Alignment(horizontal='center', wrap_text=True)
+
+    # Index de la colonne Sévérité
+    sev_idx = next((ci for ci, c in enumerate(cols2, 1) if 'v' in c.lower() and 'rit' in c.lower()), None)
+
+    for ri, (_, row) in enumerate(df_corrections.iterrows(), 2):
+        sev = ''
+        if sev_idx:
             try:
-                nb = int(nb_cell.value or 0)
-            except (ValueError, TypeError):
-                nb = 0
+                sev = str(row.iloc[sev_idx - 1]).lower()
+            except IndexError:
+                pass
 
-            if nb == 0:
-                fill = VERT_CLAIR
+        if 'critique' in sev:
+            row_fill = ROUGE_CLAIR
+        elif 'moderee' in sev or 'mod' in sev:
+            row_fill = ORANGE_CLAIR
+        else:
+            row_fill = PatternFill(fill_type='solid', fgColor='FFFACC')
+
+        for ci, val in enumerate(row, 1):
+            cell = ws2.cell(row=ri, column=ci)
+            if pd.isna(val) if not isinstance(val, (list, dict)) else False:
+                cell.value = None
+            elif hasattr(val, 'item'):
+                cell.value = val.item()
             else:
-                # Vérifier s'il y a des erreurs critiques
-                rules_cell = ws1.cell(row=row_idx, column=2)
-                rules_val = str(rules_cell.value or '')
-                fill = ROUGE_CLAIR if 'R1' in rules_val or 'R2' in rules_val else ORANGE_CLAIR
+                try:
+                    cell.value = val
+                except Exception:
+                    cell.value = str(val)
+            cell.fill = row_fill
 
-            for col_idx in range(1, min(4, ws1.max_column + 1)):
-                ws1.cell(row=row_idx, column=col_idx).fill = fill
+    # Largeurs colonnes corrections
+    widths2 = [12, 12, 14, 16, 45, 8, 35, 30, 35, 55, 65, 12]
+    for i, w in enumerate(widths2, 1):
+        if i <= len(cols2):
+            ws2.column_dimensions[get_column_letter(i)].width = w
+    ws2.freeze_panes = 'A2'
 
-        # Ajuster largeurs colonnes 1-3
-        ws1.column_dimensions['A'].width = 14
-        ws1.column_dimensions['B'].width = 20
-        ws1.column_dimensions['C'].width = 60
-
-        # Figer la première ligne
-        ws1.freeze_panes = 'A2'
-
-        # ---- Feuille 2 : Corrections ----
-        df_corrections.to_excel(writer, sheet_name='Corrections_suggérées', index=False)
-        ws2 = writer.sheets['Corrections_suggérées']
-        _apply_header_style(ws2)
-
-        # Colorer selon sévérité
-        sev_col_idx = None
-        for cidx, cell in enumerate(ws2[1], 1):
-            if cell.value and 'v' in str(cell.value).lower() and 'rit' in str(cell.value).lower():
-                sev_col_idx = cidx
-                break
-        # Fallback: chercher colonne "Sévérité"
-        if not sev_col_idx:
-            for cidx, cell in enumerate(ws2[1], 1):
-                if cell.value and normalize(str(cell.value)) in ('severite', 'severité'):
-                    sev_col_idx = cidx
-                    break
-
-        for row_idx in range(2, ws2.max_row + 1):
-            sev = ''
-            if sev_col_idx:
-                sev = str(ws2.cell(row=row_idx, column=sev_col_idx).value or '').lower()
-            if 'critique' in sev:
-                fill = ROUGE_CLAIR
-            elif 'moderee' in sev or 'modérée' in sev:
-                fill = ORANGE_CLAIR
-            else:
-                fill = PatternFill(fill_type='solid', fgColor='FFFACC')
-            for col_idx in range(1, ws2.max_column + 1):
-                ws2.cell(row=row_idx, column=col_idx).fill = fill
-
-        # Largeurs colonnes corrections
-        col_widths = [12, 12, 14, 16, 40, 8, 35, 30, 30, 50, 60, 12]
-        for i, w in enumerate(col_widths, 1):
-            if i <= ws2.max_column:
-                ws2.column_dimensions[get_column_letter(i)].width = w
-
-        ws2.freeze_panes = 'A2'
-
+    # ================================================================
+    # Sauvegarder en mémoire
+    # ================================================================
+    output = io.BytesIO()
+    wb.save(output)
     output.seek(0)
     return output.read()
